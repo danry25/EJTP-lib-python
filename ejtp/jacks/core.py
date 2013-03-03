@@ -57,7 +57,10 @@ class Jack(object):
         if hasattr(self, "closed") and self.closed==False:
             # Already running
             return None
-        import thread
+        try:
+            import thread
+        except ImportError:
+            import _thread as thread
         self.thread = thread.start_new_thread(self.run, ())
 
     @property
@@ -72,71 +75,24 @@ def make(router, iface):
     t = iface[0]
     # UDP Jack
     if t == "udp":
-        import udpjack
+        from ejtp.jacks import udp
         host, port = iface[1]
-        return udpjack.UDPJack(router, host=host, port=port)
+        return udp.UDPJack(router, host=host, port=port)
     elif t == "udp4":
-        import udpjack
+        from ejtp.jacks import udp
         host, port = iface[1]
-        return udpjack.UDPJack(router, host=host, port=port, ipv=4)
+        return udp.UDPJack(router, host=host, port=port, ipv=4)
 
     # TCP Jack
     elif t == "tcp":
-        import tcp
+        from ejtp.jacks import tcp
         host, port = iface[1]
         return tcp.TCPJack(router, host=host, port=port)
     elif t == "tcp4":
-        import tcp
+        from ejtp.jacks import tcp
         host, port = iface[1]
         return tcp.TCPJack(router, host=host, port=port, ipv=4)
 
     # Local, no jack
     elif t == "local":
         return None
-
-def test_jacks(ifaceA, ifaceB):
-    # Tests client communication across distinct routers.
-    # The printed output can be used for unit testing.
-    from ejtp import router, client
-    routerA = router.Router()
-    routerB = router.Router()
-    clientA = client.Client(routerA, ifaceA)
-    clientB = client.Client(routerB, ifaceB)
-    print "Router equality (should be false):", clientA.router == clientB.router
-
-    # Share encryptor data
-    clientA.encryptor_cache = clientB.encryptor_cache
-    clientA.encryptor_set(ifaceA, ['rotate', 43])
-    clientA.encryptor_set(ifaceB, ['rotate', 93])
-
-    # Syncronize for output consistency
-    transfer_condition = threading.Condition() # Prevent transfers from clobbering each other
-    print_lock = threading.Lock() # Prevent prints within a transfer from colliding
-    def rcv_callback(msg, client_obj):
-        transfer_condition.acquire()
-        with print_lock:
-            print "Client %r recieved from %r: %r" % (client_obj.interface, msg.addr, msg.content)
-        transfer_condition.notify_all()
-        transfer_condition.release()
-    clientA.rcv_callback = rcv_callback
-    clientB.rcv_callback = rcv_callback
-    for r in (routerA, routerB):
-        with r._jacks.values()[0].lock_ready: pass
-
-    # Do the test
-    timeout = 0.5
-    transfer_condition.acquire()
-    with print_lock:
-        clientA.write_json(ifaceB, "A => B")
-    transfer_condition.wait(timeout)
-    transfer_condition.release()
-
-    transfer_condition.acquire()
-    with print_lock:
-        clientB.write_json(ifaceA, "B => A")
-    transfer_condition.wait(timeout)
-    transfer_condition.release()
-
-    # Clean up
-    routerA.stop_all()
-    routerB.stop_all()

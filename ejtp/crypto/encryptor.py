@@ -18,6 +18,7 @@ along with the Python EJTP library.  If not, see
 
 
 from ejtp.util.hasher import strict
+from ejtp.util.py2and3 import String, RawDataDecorator, StringDecorator
 from Crypto.Hash import SHA256 as hashclass
 
 class Encryptor(object):
@@ -33,59 +34,46 @@ class Encryptor(object):
         # where your public key and private key are different.
         return self.proto()
 
+    def is_public(self):
+        return self.proto() == self.public()
+
+    def can_encrypt(self):
+        '''
+        Is this encryptor capable of encryption?
+
+        By default, assumes true. Override where this is not guaranteed.
+        '''
+        return True
+
+    @RawDataDecorator(strict=True)
     def hash_obj(self, plaintext):
         '''
         Produces a Crypto.Hash object.
-
-        >>> re = make(['rotate', 38])
-        >>> re.hash_obj('hello, world') #doctest: +ELLIPSIS
-        <Crypto.Hash.SHA256.SHA256Hash instance at ...>
         '''
         h = hashclass.new()
-        h.update(plaintext)
+        h.update(plaintext.export())
         return h
 
+    @RawDataDecorator(ret=True, strict=True)
     def hash(self, plaintext):
         '''
         Produces a binary SHA-256 hash.
-
-        >>> re = make(['rotate', 38])
-        >>> re.hash('hello, world')
-        '\\t\\xca~N\\xaan\\x8a\\xe9\\xc7\\xd2a\\x16q)\\x18H\\x83dM\\x07\\xdf\\xba|\\xbf\\xbcL\\x8a.\\x086\\r['
-        >>> re.hash('a'*300)
-        '\\x985\\xfak\\xf4\\xe2\\n\\x9b\\x9e\\xa8\\x12Pc\\x02\\xe9\\x89\\x82r\\x1al\\xf8\\xd2\\xca\\xe6z\\xf5q)\\xbf!\\xae\\x90'
         '''
-        return self.hash_obj(plaintext).digest()
+        return self.hash_obj(plaintext.export()).digest()
 
+    @RawDataDecorator(ret=True, strict=True)
     def sign(self, plaintext):
         '''
         Override in subclasses where you can't decrypt plaintext
-
-        >>> plaintext = 'hello, world'
-        >>> re  = make(['rotate', 38])
-        >>> sig = re.sign(plaintext)
-        >>> sig
-        '\\xe3\\xa4X(\\x84Hd\\xc3\\xa1\\xac;\\xf0K\\x03\\xf2"]>\\'\\xe1\\xb9\\x94V\\x99\\x96&d\\x08\\xe2\\x10\\xe75'
-        >>> re.encrypt(sig)
-        '\\t\\xca~N\\xaan\\x8a\\xe9\\xc7\\xd2a\\x16q)\\x18H\\x83dM\\x07\\xdf\\xba|\\xbf\\xbcL\\x8a.\\x086\\r['
-        >>> re.encrypt(sig) == re.hash(plaintext)
-        True
         '''
         h = self.hash(plaintext)
         return self.decrypt(h)
 
+    @RawDataDecorator(strict=True)
     def sig_verify(self, plaintext, signature):
         '''
         Verify a signature, by comparing it against a new signature
         of the same source data.
-
-        >>> plaintext = 'hello, world'
-        >>> re  = make(['rotate', 38])
-        >>> sig = re.sign(plaintext)
-        >>> re.sig_verify(plaintext, sig)
-        True
-        >>> re.sig_verify("other text", sig)
-        False
         '''
         return signature == self.sign(plaintext)
 
@@ -100,20 +88,26 @@ class Flip(Encryptor):
         self.encrypt = parent.decrypt
         self.decrypt = parent.encrypt
 
+@StringDecorator()
 def make(data):
-    if type(data) in (str, unicode):
+    if isinstance(data, String):
         import json
-        data = json.loads(data)
+        data = json.loads(data.export())
+    if isinstance(data, Encryptor):
+        return data
     t = data[0]
     args = data[1:]
     if t=="rotate":
-        import rotate
+        from . import rotate
         return rotate.RotateEncryptor(*args)
     elif t=="aes":
-        import aes
+        from . import aes
         return aes.AESEncryptor(*args)
     elif t=="rsa":
-        import rsa
+        from . import rsa
         return rsa.RSA(*args)
+    elif t=="ecc":
+        from . import ecc
+        return ecc.ECC(*args)
     else:
         raise TypeError("Unsupported encryption type: %r"%data)

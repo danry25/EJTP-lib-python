@@ -18,15 +18,15 @@ along with the Python EJTP library.  If not, see
 
 
 __all__ = [
-	'logging',
 	'address',
+	'applications',
 	'client',
+	'config',
 	'crypto',
-	'daemon',
-	'ejforward',
 	'frame',
-	'interactive',
+	'identity',
 	'jacks',
 	'router',
+	'tests',
 	'util',
 ]

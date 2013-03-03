@@ -16,11 +16,12 @@ along with the Python EJTP library.  If not, see
 <http://www.gnu.org/licenses/>.
 '''
 
-from ejtp import logging
+import logging
 logger = logging.getLogger(__name__)
 
 from ejtp.client import Client
 from ejtp.util.hasher import strict
+from ejtp.util.py2and3 import String
 from ejtp.address import *
 import re
 
@@ -50,16 +51,16 @@ class DaemonClient(Client):
         self.filter = re.compile(filter_text)
 
     def rcv_callback(self, msg, client_obj):
-        sender = msg.addr
+        sender = msg.sender
         if sender != self.controller:
             # Not the controller, reject it
             return self.error(sender, 300, {'controller':self.controller, 'sender':sender})
         data = None
         try:
-            data = msg.jsoncontent
+            data = msg.unpack()
         except:
             return self.error(sender,400)
-        if type(data) != dict:
+        if not isinstance(data, dict):
             return self.error(sender,401)
         if not "type" in data:
             return self.error(sender,402)
@@ -139,7 +140,7 @@ class DaemonClient(Client):
         self.success(data)
 
     def success(self, data):
-        logger.info("SUCCESFUL COMMAND %s", strict(data))
+        logger.info("SUCCESFUL COMMAND %s", strict(data).export())
         self.write_json(self.controller, {
             'type':'ejtpd-success',
             'command': data,
@@ -147,7 +148,7 @@ class DaemonClient(Client):
 
     def error(self, target, code, details=None):
         msg = errorcodes[code]
-        logger.error("CLIENT ERROR #%d %s %s", code, msg, (details and strict(details) or ""))
+        logger.error("CLIENT ERROR #%d %s %s", code, msg, (details and strict(details) or String()).export())
         self.write_json(target, {
             'type':'ejtpd-error',
             'code': code,
@@ -161,16 +162,16 @@ class ControllerClient(Client):
         self.target = py_address(target)
 
     def rcv_callback(self, msg, client_obj):
-        sender = msg.addr
+        sender = msg.sender
         if sender != self.target:
             # Not the daemon, drop it
             return
         data = None
         try:
-            data = msg.jsoncontent
+            data = msg.unpack()
         except:
             return self.error(sender,400)
-        if type(data) != dict:
+        if not isinstance(data, dict):
             return self.error(sender,401)
         if not "type" in data:
             return self.error(sender,402)
@@ -179,7 +180,7 @@ class ControllerClient(Client):
             if   mtype == "ejtpd-success":
                 self.success(data)
             elif mtype == "ejtpd-error":
-                logger.error("Remote error %d %s %s", data['code'], data['msg'], strict(data['details']))
+                logger.error("Remote error %d %s %s", data['code'], data['msg'], strict(data['details']).export())
                 self.response_callback(False, data)
             else:
                 return self.error(sender,403,command)
@@ -219,10 +220,10 @@ class ControllerClient(Client):
                 classname = ("class"  in command and command["class"])  or ''
                 args      = ("args"   in command and command["args"])   or []
                 kwargs    = ("kwargs" in command and command["kwargs"]) or {}
-                logger.info("Remote client succesfully initialized (%s.%s, %s, %s)", modname, classname, strict(args), strict(kwargs))
+                logger.info("Remote client succesfully initialized (%s.%s, %s, %s)", modname, classname, strict(args).export(), strict(kwargs).export())
             elif command_type == 'ejtpd-client-destroy':
                 interface = ("interface" in command and command["interface"]) or ''
-                logger.info("Remote client succesfully destroyed (%s)", strict(interface))
+                logger.info("Remote client succesfully destroyed (%s)", strict(interface).export())
             else:
                 logger.info("Remote command succesful (Unrecognized command - %r)", command)
         else:
@@ -235,41 +236,3 @@ class ControllerClient(Client):
             'msg':  errorcodes[code],
             'details': details,
         })
-
-def mock_locals(name1='c1', name2='c2'):
-    '''
-    Returns two clients that talk locally through a router.
-    >>> daemon, control = mock_locals()
-    >>> modname, classname, interface = "ejtp.client", "Client", ["local", None, "Exampley"]
-    >>> control.client_init(modname, classname)
-    INFO:ejtp.daemon: Initializing client...
-    ERROR:ejtp.daemon: __init__() takes at least 3 arguments (2 given)
-    ERROR:ejtp.daemon: CLIENT ERROR #502 Command error (Class initialization error) {"args":[],"class":"Client","exception":"TypeError('__init__() takes at least 3 arguments (2 given)',)","kwargs":{},"module":"ejtp.client","type":"ejtpd-client-init"}
-    ERROR:ejtp.daemon: Remote error 502 Command error (Class initialization error) {"args":[],"class":"Client","exception":"TypeError('__init__() takes at least 3 arguments (2 given)',)","kwargs":{},"module":"ejtp.client","type":"ejtpd-client-init"}
-    >>> control.client_init(modname, classname, interface)
-    INFO:ejtp.daemon: Initializing client...
-    INFO:ejtp.daemon: SUCCESFUL COMMAND {"args":[["local",null,"Exampley"]],"class":"Client","kwargs":{},"module":"ejtp.client","type":"ejtpd-client-init"}
-    INFO:ejtp.daemon: Remote client succesfully initialized (ejtp.client.Client, [["local",null,"Exampley"]], {})
-    >>> daemon.router.client(interface) #doctest: +ELLIPSIS
-    <ejtp.client.Client object at ...>
-    >>> daemon.router.client(interface).interface
-    [u'local', None, u'Exampley']
-    >>> control.client_destroy(interface)
-    INFO:ejtp.daemon: Destroying client...
-    INFO:ejtp.daemon: SUCCESFUL COMMAND {"interface":["local",null,"Exampley"],"type":"ejtpd-client-destroy"}
-    INFO:ejtp.daemon: Remote client succesfully destroyed (["local",null,"Exampley"])
-    >>> repr(daemon.router.client(interface))
-    'None'
-    '''
-    from router import Router
-    r  = Router()
-    ifaces = {
-        'daemon':  ['local', None, name1],
-        'control': ['local', None, name2],
-    }
-    daemon  = DaemonClient(    r, ifaces['daemon'], ifaces['control'], make_jack = False)
-    control = ControllerClient(r, ifaces['control'], ifaces['daemon'], make_jack = False)
-    control.encryptor_cache = daemon.encryptor_cache
-    daemon.encryptor_set(daemon.interface,  ['rotate',  3])
-    daemon.encryptor_set(control.interface, ['rotate', -7])
-    return (daemon, control)

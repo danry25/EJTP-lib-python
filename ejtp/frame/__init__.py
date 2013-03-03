@@ -16,8 +16,39 @@ along with the Python EJTP library.  If not, see
 <http://www.gnu.org/licenses/>.
 '''
 
-# Importing this file sets up some logging properties.
+__all__ = [
+    'createFrame',
+    'RegisterFrame',
+    'address',
+    'base',
+    'encrypted',
+    'signed',
+    'json',
+    'compressed',
+    'registration',
+]
 
-import ejtp.logging
+__doctestall__ = [
+    'address',
+    'base',
+    'encrypted',
+    'signed',
+    'json',
+    'registration',
+]
 
-ejtp.logging.configure(loud=True)
+from ejtp.frame.registration import createFrame, RegisterFrame
+
+# importing all builtin Frames to make them register themselves
+_builtin_frames = ('ejtp.frame.encrypted', 'ejtp.frame.signed', 'ejtp.frame.json', 'ejtp.frame.compressed')
+
+def init():
+    try:
+        from importlib import import_module
+    except ImportError:
+        import_module = __import__
+
+    for f in _builtin_frames:
+        import_module(f)
+
+init()

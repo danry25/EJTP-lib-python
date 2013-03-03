@@ -16,11 +16,11 @@ along with the Python EJTP library.  If not, see
 <http://www.gnu.org/licenses/>.
 '''
 
-from core import *
+from ejtp.jacks.core import *
 
 __all__ = [
     'core',
-    'streamjack',
+    'stream',
     'tcp',
-    'udpjack',
+    'udp',
 ]

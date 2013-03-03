@@ -16,10 +16,15 @@ along with the Python EJTP library.  If not, see
 <http://www.gnu.org/licenses/>.
 '''
 
-import core as jack
+from ejtp.jacks import core as jack
+
+from ejtp.util.py2and3 import RawData, RawDataDecorator
 
 import threading
-import Queue
+try:
+    import Queue
+except ImportError: # in python3.x it's renamed to lowercase queue
+    import queue as Queue
 
 class StreamJack(jack.Jack):
     def __init__(self, router, interface):
@@ -72,7 +77,7 @@ class StreamJack(jack.Jack):
         '''
         Send frame to somewhere.
         '''
-        conn = self.get_connection(frame.addr)
+        conn = self.get_connection(frame.address)
         conn.send(frame)
 
 class Connection(object):
@@ -81,19 +86,21 @@ class Connection(object):
     '''
     def __init__(self, jack=None):
         self.jack = jack
-        self._buffer = ""
+        self._buffer = RawData()
         self._running = False
         self._outqueue = Queue.Queue()
         self._thread = threading.Thread(target=self.run)
 
     # SUBCLASS INTERFACE ------------------------------------------------------
 
+    @RawDataDecorator(strict=True)
     def _send(self, frame):
         '''
         Subclass-provided function that sends text to the remote end.
         '''
         pass
 
+    @RawDataDecorator(args=False, ret=True, strict=True)
     def _recv(self):
         '''
         Subclass-provided function that returns text. Allowed to block.
@@ -116,7 +123,7 @@ class Connection(object):
         self._running = False
 
     def send(self, frame):
-        self._send(self.wrap(str(frame)))
+        self._send(self.wrap(frame.content))
 
     def recv(self, timeout=0):
         '''
@@ -133,30 +140,18 @@ class Connection(object):
         '''
         Wrap a frame for transport
         '''
-        return hex(len(frame))[2:] + "." + str(frame)        
+        return RawData(format(len(frame), '0x')) + "." + frame        
 
+    @RawDataDecorator(strict=True)
     def inject(self, newdata):
         '''
         Process new data from the outside world.
-
-        >>> c = Connection()
-        >>> plaintext = "The pursuit of \\x00 happiness"
-        >>> wrapped = c.wrap(plaintext)
-        >>> c.inject(wrapped)
-        >>> c.recv() == plaintext
-        True
-        >>> c.inject(wrapped[:5]) # Simulate a partial recieve
-        >>> c.recv() == None
-        True
-        >>> c.inject(wrapped[5:]) # Finish iiittttt
-        >>> c.recv() == plaintext
-        True
         '''
         self._buffer += newdata
-        if "." not in self._buffer:
+        if RawData(".") not in self._buffer:
             return
         size, content = self._buffer.split('.',1)
-        size = int(size, 16) # Read size as hex
+        size = int(size.export(), 16) # Read size as hex
         if len(content) < size:
             return
         if self.jack:

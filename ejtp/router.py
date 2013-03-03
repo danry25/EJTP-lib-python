@@ -24,15 +24,18 @@ along with the Python EJTP library.  If not, see
     and clients on the other side for internal frame routing.
 '''
 
-from ejtp import logging
+import logging
 logger = logging.getLogger(__name__)
 
-from frame import Frame
+from ejtp import frame
 from ejtp.util.crashnicely import Guard
+
+STOPPED = 0
+THREADED = 1
 
 class Router(object):
     def __init__(self, jacks=[], clients=[]):
-        self.runstate = "stopped"
+        self.runstate = STOPPED
         self._jacks = {}
         self._clients = {}
         self._loadjacks(jacks)
@@ -43,40 +46,26 @@ class Router(object):
         '''
         Accepts string or frame.Frame
 
-        >>> r = Router()
-        >>> # Test gibberish errors
-        >>> r.recv("kdfj;alfjl;")
-        INFO:ejtp.router: Router could not parse frame: 'kdfj;alfjl;'
-
-        >>> # Undeliverable message, client doesn't exist
-        >>> r.recv('r["local",null,"example"]\\x00Jam and cookies')
-        INFO:ejtp.router: Router could not deliver frame: [u'local', None, u'example']
-
-        >>> # Frame with no destination
-        >>> r.recv('s["local",null,"example"]\\x00Jam and cookies')
-        INFO:ejtp.router: Frame recieved directly from [u'local', None, u'example']
-
-        >>> # Frame with weird type
-        >>> r.recv('x["local",null,"example"]\\x00Jam and cookies')
-        INFO:ejtp.router: Frame has a type that the router does not understand (x)
+        In the future, we may want to consider non-frames a ValueError
         '''
         logger.debug("Handling frame: %s", repr(msg))
-        try:
-            msg = Frame(msg)
-        except Exception as e:
-            logger.info("Router could not parse frame: %s", repr(msg))
-            return
-        if msg.type == "r":
-            recvr = self.client(msg.addr) or self.jack(msg.addr)
+        if not isinstance(msg, frame.base.BaseFrame):
+            try:
+                msg = frame.createFrame(msg)
+            except Exception:
+                logger.info("Router could not parse frame: %s", repr(msg))
+                return
+        if isinstance(msg, frame.address.ReceiverCategory):
+            recvr = self.client(msg.address) or self.jack(msg.address)
             if recvr:
                 with Guard():
                     recvr.route(msg)
             else:
-                logger.info("Router could not deliver frame: %s", str(msg.addr))
-        elif msg.type == "s":
-            logger.info("Frame recieved directly from %s", str(msg.addr))
+                logger.info("Router could not deliver frame: %s", str(msg.address))
+        elif isinstance(msg, frame.address.SenderCategory):
+            logger.info("Frame recieved directly from %s", str(msg.address))
         else:
-            logger.info("Frame has a type that the router does not understand (%s)", msg.type)
+            logger.info("Frame has a type that the router does not understand (%r)", msg)
 
     def jack(self, addr):
         # Return jack registered at addr, or None
@@ -107,11 +96,11 @@ class Router(object):
         for i in self._jacks:
             self._jacks[i].close()
 
-    def run(self, level="threaded"):
-        if level=="threaded":
-            if self.runstate == "stopped":
+    def run(self, level=THREADED):
+        if level==THREADED:
+            if self.runstate == STOPPED:
                 self.thread_all()
-        elif level=="stopped":
+        elif level==STOPPED:
             # stop all jacks
             self.stop_all()
         self.runstate = level
@@ -126,17 +115,21 @@ class Router(object):
 
     def _loadjack(self, jack):
         key = rtuple(jack.interface[:2])
+        if key in self._jacks:
+            raise ValueError('jack already loaded')
         self._jacks[key] = jack
-        if self.runstate == "threaded":
+        if self.runstate == THREADED:
             jack.run_threaded()
 
     def _loadclient(self, client):
         key = rtuple(client.interface[:3])
+        if key in self._clients:
+            raise ValueError('client already loaded')
         self._clients[key] = client
 
 def rtuple(obj):
     # Convert lists into tuples recursively
-    if type(obj) in (list, tuple):
+    if isinstance(obj, list) or isinstance(obj, tuple):
         return tuple([rtuple(i) for i in obj])
     else:
         return obj

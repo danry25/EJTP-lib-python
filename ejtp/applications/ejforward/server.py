@@ -16,13 +16,13 @@ along with the Python EJTP library.  If not, see
 <http://www.gnu.org/licenses/>.
 '''
 
-from ejtp import logging
+import logging
 logger = logging.getLogger(__name__)
 
 from ejtp.client import Client
 from ejtp.address import *
 from ejtp.util.hasher import make as hashfunc
-from ejtp.crypto import bin_unicode
+from ejtp.util.py2and3 import RawData, String
 
 class ForwardServer(Client):
     def __init__(self, router, interface, **kwargs):
@@ -44,7 +44,6 @@ class ForwardServer(Client):
         To send a message through EJForward, simply onion route through the 
         server, client, and destination, in that order.
 
-        >>> from ejtp.ejforward.client import test_setup
         >>> from ejtp.client import Client
         >>> client, server = test_setup()
         >>> dest   = Client(client.router, ['local', None, 'destination'])
@@ -54,33 +53,31 @@ class ForwardServer(Client):
         >>> dest.encryptor_cache = sender.encryptor_cache = client.encryptor_cache
 
         >>> def rcv_callback(msg, client):
-        ...     print msg.jsoncontent
+        ...     print(msg.unpack())
         >>> message = {'type':'example'}
-        >>> print message
-        {'type': 'example'}
         >>> dest.rcv_callback = rcv_callback
         >>> sender.owrite_json(
         ...     [server.interface, client.interface, dest.interface],
         ...     message
-        ... )
-        {u'type': u'example'}
+        ... ) # doctest: +ELLIPSIS
+        {...'type': ...'example'}
         '''
-        address = str_address(msg.addr)
+        address = str_address(msg.address)
         if address in self.client_data:
-            mhash = self.store_message(address, str(msg))
+            mhash = self.store_message(address, msg.content.export())
             self.message(address, mhash)
         else:
             self.send(msg)
 
     def rcv_callback(self, msg, client_obj):
-        data   = msg.jsoncontent
+        data   = msg.unpack()
         mtype  = data['type']
-        target = msg.addr
+        target = msg.sender
         if mtype=='ejforward-get-status':
             self.notify(target)
         elif mtype=='ejforward-retrieve':
             client = self.client(target)
-            hashes = data['hashes'] or client['messages'].keys()[:5]
+            hashes = data['hashes'] or list(client['messages'].keys())[:5]
             for mhash in hashes:
                 self.message(target, mhash)
         elif mtype=='ejforward-ack':
@@ -94,7 +91,7 @@ class ForwardServer(Client):
         client = self.client(target)
         status = client['status']
         status['type'] = 'ejforward-notify'
-        status['hashes'] = client['messages'].keys()[:5]
+        status['hashes'] = list(client['messages'].keys())[:5]
         self.write_json(
             target,
             status,
@@ -106,7 +103,7 @@ class ForwardServer(Client):
             {
                 'type':'ejforward-message',
                 'target':target,
-                'data':bin_unicode(self.client(target)['messages'][mhash])
+                'data':RawData(self.client(target)['messages'][String(mhash)])
             },
         )
 
@@ -122,6 +119,7 @@ class ForwardServer(Client):
         return mhash
 
     def delete_message(self, target, chophash):
+        chophash = String(chophash)
         client = self.client(target)
         client['chopping_block'].remove(chophash)
         chopsize = len(client['messages'][chophash])
@@ -148,7 +146,7 @@ class ForwardServer(Client):
 
         >>> server.client(address)
         Traceback (most recent call last):
-        KeyError: '["sad thoughts","lonely eyes"]'
+        KeyError: String('["sad thoughts","lonely eyes"]')
 
         Storing and accessing data.
 
@@ -178,6 +176,24 @@ class ForwardServer(Client):
         >>> server.setup_client(address)
         >>> from ejtp.util.hasher import strict
         >>> strict(server.client(address))
-        '{"chopping_block":[],"messages":{},"status":{"total_count":1000,"total_space":32768,"used_count":0,"used_space":0}}'
+        String('{"chopping_block":[],"messages":{},"status":{"total_count":1000,"total_space":32768,"used_count":0,"used_space":0}}')
         '''
         self.create_client(address, self.default_data)
+
+
+_demo_client_addr = ['local', None, 'client']
+_demo_server_addr = ['local', None, 'server']
+
+def test_setup():
+    # Set up the demo client stuff in this module for further testing
+    from ejtp.applications.ejforward.client import ForwardClient
+    from ejtp.router import Router
+    r = Router()
+    client = ForwardClient(r, _demo_client_addr, _demo_server_addr)
+    server = ForwardServer(r, _demo_server_addr)
+    client.encryptor_set(_demo_client_addr, ['rotate', 5])
+    client.encryptor_set(_demo_server_addr, ['rotate', 3])
+    server.encryptor_cache = client.encryptor_cache
+    server.setup_client(client.interface)
+    return (client, server)
+
